@@ -95,6 +95,8 @@ class JSONViewer {
         }
         return prefix;
     }
+    getJSONs() {
+    }
 }
 
 class JSONNonLeaf extends JSONViewer {
@@ -268,6 +270,23 @@ class JSONNonLeaf extends JSONViewer {
             });
         });
     }
+    getJSONs() {
+        var temp_this = this;
+        var return_jsons = [{}];
+        Object.keys(this.viewers).forEach(function(k){
+            var jsons = temp_this.viewers[k].getJSONs();
+            var return_jsons_list = [];
+            for (var i = 0; i < jsons.length; i++) {
+                var return_jsons_copy = JSON.parse(JSON.stringify(return_jsons));
+                return_jsons_copy.forEach(function(e){
+                    e[k] = jsons[i];
+                });
+                return_jsons_list.push(return_jsons_copy);
+            }
+            return_jsons = [].concat(...return_jsons_list);
+        });
+        return return_jsons;
+    }
 }
 
 class JSONList extends JSONNonLeaf {
@@ -359,6 +378,9 @@ class JSONDictionary extends JSONNonLeaf {
 
 // a json leaf
 class Param extends JSONViewer {
+    getJSONs() {
+        return [this.json["param"]];
+    }
 }
 
 class StringParam extends Param {
@@ -518,6 +540,9 @@ class NumberParam extends StringParam {
         this.object.savePopoverInfo();
         this.object.display(this.parent_div);
     }
+    getJSONs() {
+        return this.object.getJSONs();
+    }
 }
 
 class BooleanParam extends Param {
@@ -614,6 +639,9 @@ class NumberObject extends AbstractNumberObject {
     savePopoverInfo() {
         this.json["number"] = Number(this.input_div.select("input").node().value.trim());
     }
+    getJSONs() {
+        return [this.json["number"]];
+    }
 }
 
 class RangeObject extends AbstractNumberObject {
@@ -706,12 +734,21 @@ class RangeObject extends AbstractNumberObject {
         this.json["extras"]["by"] = Number(this.input3.node().value.trim());
         this.json["number"] = this.json["extras"]["lower"];
     }
+    getJSONs() {
+        var return_jsons = [];
+        for(var i = this.json["extras"]["lower"]; i <= this.json["extras"]["upper"]; i += this.json["extras"]["by"]) {
+            return_jsons.push(i);
+        }
+        return return_jsons;
+    }
 }
+
 class NormalDistObject extends AbstractNumberObject {
     constructor(json) {
         super(json);
         this.json["extras"]["mean"] = json["number"];
         this.json["extras"]["variance"] = 0;
+        this.json["extras"]["num_samples"] = 1;
         this.input1 = null;
         this.input2 = null;
     }
@@ -737,6 +774,14 @@ class NormalDistObject extends AbstractNumberObject {
           .append("input")
           .attr("class", "form-control inline")
           .attr("value", this.json["extras"]["variance"]);
+        this.input_div
+          .append("text")
+          .attr("class", "inline")
+          .html("Number of Samples:");
+        this.input3 = this.input_div
+          .append("input")
+          .attr("class", "form-control inline")
+          .attr("value", this.json["extras"]["num_samples"]);
         $(this.cell_div.node()).on("shown.bs.popover", function(){
             temp_this.input1.node().select();
             // taken from https://www.w3schools.com/howto/howto_js_trigger_button_enter.asp
@@ -752,6 +797,16 @@ class NormalDistObject extends AbstractNumberObject {
                 }
             });
             temp_this.input2.node().addEventListener("keydown", function(event) {
+                // Number 13 is the "Enter" key on the keyboard
+                if (event.keyCode === 13) {
+                    // Cancel the default action, if needed
+                    event.preventDefault();
+                    // Trigger the button element with a click
+                    param.deselect();
+                    $(temp_this.cell_div.node()).focus();
+                }
+            });
+            temp_this.input3.node().addEventListener("keydown", function(event) {
                 // Number 13 is the "Enter" key on the keyboard
                 if (event.keyCode === 13) {
                     // Cancel the default action, if needed
@@ -777,7 +832,15 @@ class NormalDistObject extends AbstractNumberObject {
     savePopoverInfo() {
         this.json["extras"]["mean"] = Number(this.input1.node().value.trim());
         this.json["extras"]["variance"] = Number(this.input2.node().value.trim());
+        this.json["extras"]["num_samples"] = Number(this.input3.node().value.trim());
         this.json["number"] = this.json["extras"]["mean"];
+    }
+    getJSONs() {
+        var return_jsons = [];
+        for(var i = 0; i < this.json["extras"]["num_samples"]; i++) {
+            return_jsons.push(randn_bm());
+        }
+        return return_jsons;
     }
 }
 
@@ -801,3 +864,54 @@ function isChild(x, y){
       if (x.id == "a") return true;
     }
 }
+
+
+// taken from https://ourcodeworld.com/articles/read/189/how-to-create-a-file-and-generate-a-download-with-javascript-in-the-browser-without-a-server
+function downloads() {
+    let zip = new JSZip();
+    var jsons = json_viewer.getJSONs();
+    for (var i = 0; i < jsons.length; i++) {
+        zip.file('microsimulation_paramemters'+i+'.json', JSON.stringify(jsons[i]));
+    }
+    zip.generateAsync({type: "blob"}).then(function(content) {
+        saveAs(content, 'microsimulation_paramemters.zip');
+    });
+
+    // let zip = new JSZip();
+    // zip.file("idlist.txt", `PMID:29651880\r\nPMID:29303721`);
+    // zip.generateAsync({type: "blob"}).then(function(content) {
+    //   saveAs(content, "download.zip");
+    // });
+
+    // var zip = new JSZip();
+    // zip.file("Hello.txt", "Hello World\n");
+    // // var img = zip.folder("images");
+    // // img.file("smile.gif", imgData, {base64: true});
+    // zip.generateAsync({type:"blob"})
+    // .then(function(content) {
+    //     // see FileSaver.js
+    //     saveAs(content, "example.zip");
+    // });
+
+    // var blob = new Blob(["Hello, world!"], {type: "text/plain;charset=utf-8"});
+    // saveAs(blob, "hello world.txt");
+
+    // var element = document.createElement('a');
+    // element.style.display = 'none';
+    // var text = 'hello world';
+    // element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+    // element.setAttribute('download', 'microsimulation_paramemters.json');
+    // document.body.appendChild(element);
+    // element.click();
+    // document.body.removeChild(element);
+}
+
+// taken from https://stackoverflow.com/questions/25582882/javascript-math-random-normal-distribution-gaussian-bell-curve/36481059#36481059
+// Standard Normal variate using Box-Muller transform.
+function randn_bm() {
+    var u = 0, v = 0;
+    while(u === 0) u = Math.random(); //Converting [0,1) to (0,1)
+    while(v === 0) v = Math.random();
+    return Math.sqrt( -2.0 * Math.log( u ) ) * Math.cos( 2.0 * Math.PI * v );
+}
+

@@ -10,6 +10,9 @@
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js" integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6" crossorigin="anonymous"></script>
     <!-- end bootstrap -->
     <!-- d3 --> <script src="/static/d3.min.js"></script>
+    <!-- <script src="/static/FileSaver.js"></script> -->
+    <script src="/static/FileSaver.min.js"></script>
+    <script src="/static/jszip.min.js"></script>
     <script>
       var json_string = null;
     </script>
@@ -30,7 +33,7 @@
     </div>
     <div>
       <text id="title" class="m-3">No JSON Uploaded</text>
-      <button type="button" class="btn btn-secondary m-3">Download</button>
+      <button type="button" class="btn btn-secondary m-3" onclick="downloads()">Download</button>
     </div>
     <div id="param-editor">
     </div>
