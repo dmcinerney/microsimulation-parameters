@@ -1,0 +1,22 @@
+.hide {
+	display: none;
+}
+
+.cell.selected {
+	outline: blue;
+	outline-style: solid;
+}
+
+/*.cell.selected:focus {
+	outline: blue;
+	outline-style: solid;
+}*/
+
+/*.cell:focus {
+	outline: none;
+}*/
+
+.inline { 
+    display: inline-block;
+    margin: 3px;
+}
