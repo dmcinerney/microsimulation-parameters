@@ -27,13 +27,6 @@ $(document).ready(function(){
 });
 
 function onLoad() {
-    // console.log(json_string);
-    if (json_string != "null") {
-        console.log("loading default json")
-        showJSON(json_string);
-    } else {
-        console.log("no json uploaded")
-    }
 }
 
 // taken from https://stackoverflow.com/questions/36127648/uploading-a-json-file-and-using-it
@@ -100,52 +93,14 @@ class JSONViewer {
 }
 
 class JSONNonLeaf extends JSONViewer {
-    recurse() {
-        this.viewers = {}; // stores all sub views
-        this.elements = {}; // stores any elements that need to be referenced
-    }
-    display(parent_div){
-        super.display(parent_div);
-        this.container = this.parent_div.append("div").attr("class", "border m-3");
-        if (this.isTable(true)) {
-            this.showTableView();
-        } else {
-            this.showTabView();
-        }
-    }
-    // function isTable(o, checkleaf=false) {
-    //     rows = Object.keys(o);
-    //     if (rows.length <= 0) {
-    //         return false;
-    //     }
-    //     if (isLeaf(Object.values(o)[0])) {
-    //         return false;
-    //     }
-    //     columns = Object.keys(Object.values(o)[0]);
-    //     columns_set = new Set(columns);
-    //     for (i = 0; i < rows.length; i++) {
-    //         row_columns = Object.keys(o[rows[i]]);
-    //         if (row_columns.length != columns.length) {
-    //             return false;
-    //         }
-    //         for (j = 0; j < row_columns.length; j++) {
-    //             if (!columns_set.has(row_columns[j])) {
-    //                 return false;
-    //             }
-    //             if (checkleaf && !isLeaf(o[rows[i]][row_columns[j]])) {
-    //                 return false;
-    //             }
-    //         }
-    //     }
-    //     return true;
-    // }
     isTable(checkleaf=false){
         var rows = Object.keys(this.viewers);
         if (rows.length <= 0) {
             return false;
         }
         var example_value = this.viewers[rows[0]];
-        if (example_value instanceof Param) {
+        // for now, lists are off-limits for being involved in grid viewers
+        if ((example_value instanceof Param) || (example_value instanceof JSONList)) {
             return false;
         }
         var columns = Object.keys(example_value.viewers);
@@ -169,6 +124,181 @@ class JSONNonLeaf extends JSONViewer {
             }
         }
         return true;
+    }
+    display(parent_div){
+        super.display(parent_div);
+        this.container = this.parent_div.append("div").attr("class", "border m-3");
+        if (this.isTable(true)) {
+            this.showTableView();
+        } else {
+            this.showTabView();
+        }
+    }
+}
+
+// TODO: Fully implement this class, for not it has limited functionality
+class JSONList extends JSONNonLeaf {
+    recurse() {
+        var temp_this = this;
+        this.viewers = {}; // stores all sub views
+        this.elements = {}; // stores any elements that need to be referenced
+        for(var k = 0; k < this.json.length; k++) {
+            var v = temp_this.json[k];
+            if (v == null) {
+                temp_this.viewers[k] = null;
+            } else if (typeof v == "number") {
+                temp_this.json[k] = {"param": v};
+                temp_this.viewers[k] = new NumberParam(temp_this.json[k], temp_this, k);
+            } else if (typeof v == "string") {
+                temp_this.json[k] = {"param": v};
+                temp_this.viewers[k] = new StringParam(temp_this.json[k], temp_this, k);
+            } else if (typeof v == "boolean") {
+                temp_this.json[k] = {"param": v};
+                temp_this.viewers[k] = new BooleanParam(temp_this.json[k], temp_this, k);
+            } else if (Array.isArray(v)) {
+                temp_this.viewers[k] = new JSONList(v, temp_this, k);
+            } else {
+                temp_this.viewers[k] = new JSONDictionary(v, temp_this, k);
+            }
+        }
+    }
+    isTable(checkleaf=false){
+        return false;
+    }
+    showTabView() {
+        var temp_this = this;
+        this.tabview = true;
+        var views_div = this.container
+          .append("div")
+        var row = views_div
+          .append("table")
+          .attr("class", "table")
+          .append("tbody")
+          .selectAll("tr")
+          .data(Object.keys(this.viewers))
+          .enter()
+            .append("tr");
+        row
+          .append("td")
+          .attr("class", "cell")
+          .each(function(d){ temp_this.viewers[d].display(d3.select(this)); });
+        row
+          .append("td")
+          .append("button")
+          .style("float", "right")
+          .attr("type", "button")
+          .attr("class", "btn btn-danger")
+          .html("-")
+          .attr("index", function(d){ return d; })
+          .on("click", function(){
+              temp_this.deleteView(Number(d3.select(this).attr("index")));
+          });
+        var button_group = this.container
+          .append("div")
+          .attr("class", "btn-group");
+        button_group
+          .append("button")
+          .attr("type", "button")
+          .attr("class", "btn btn-light dropdown-toggle")
+          .attr("data-toggle", "dropdown")
+          .attr("aria-haspopup", "true")
+          .attr("areia-expanded", "false")
+          .html("+");
+        var dropdown_menu = button_group
+          .append("div")
+          .attr("class", "dropdown-menu");
+        dropdown_menu
+          .append("a")
+          .attr("class", "dropdown-item")
+          .attr("href", "#")
+          .html("string")
+          .on("click", function(){
+              temp_this.addView("string");
+          });
+        dropdown_menu
+          .append("a")
+          .attr("class", "dropdown-item")
+          .attr("href", "#")
+          .html("number")
+          .on("click", function(){
+              temp_this.addView("number");
+          });
+        dropdown_menu
+          .append("a")
+          .attr("class", "dropdown-item")
+          .attr("href", "#")
+          .html("boolean")
+          .on("click", function(){
+              temp_this.addView("boolean");
+          });
+    }
+    addView(type) {
+        var k = this.json.length;
+        if (type == "string") {
+            this.json.push({"param": "placeholder"});
+            this.viewers[k] = new StringParam(this.json[k], this, k);
+        } else if (type == "number") {
+            this.json.push({"param": 0});
+            this.viewers[k] = new NumberParam(this.json[k], this, k);
+        } else if (type == "boolean") {
+            this.json.push({"param": false});
+            this.viewers[k] = new BooleanParam(this.json[k], this, k);
+        }
+        this.display(this.parent_div);
+    }
+    deleteView(index) {
+        // d3.select(this.viewers[index].parent_div.node().parentNode).remove();
+        for(var i = index+1; i < Object.keys(this.viewers).length; i++) {
+            this.json[index] = this.json[index+1];
+            this.viewers[index] = this.viewers[index+1];
+        }
+        this.json.pop();
+        delete this.viewers[Object.keys(this.viewers).length-1];
+        this.display(this.parent_div);
+    }
+    getJSONs() {
+        var temp_this = this;
+        var return_jsons = [[]];
+        for(var k = 0; k < this.json.length; k++) {
+            var jsons = temp_this.viewers[k].getJSONs();
+            var return_jsons_list = [];
+            for (var i = 0; i < jsons.length; i++) {
+                var return_jsons_copy = JSON.parse(JSON.stringify(return_jsons));
+                return_jsons_copy.forEach(function(e){
+                    e.push(jsons[i]);
+                });
+                return_jsons_list.push(return_jsons_copy);
+            }
+            return_jsons = [].concat(...return_jsons_list);
+        }
+        return return_jsons;
+    }
+}
+
+class JSONDictionary extends JSONNonLeaf {
+    recurse() {
+        var temp_this = this;
+        this.viewers = {}; // stores all sub views
+        this.elements = {}; // stores any elements that need to be referenced
+        Object.keys(this.json).forEach(function(k){
+            var v = temp_this.json[k];
+            if (v == null) {
+                temp_this.viewers[k] = null;
+            } else if (typeof v == "number") {
+                temp_this.json[k] = {"param": v};
+                temp_this.viewers[k] = new NumberParam(temp_this.json[k], temp_this, k);
+            } else if (typeof v == "string") {
+                temp_this.json[k] = {"param": v};
+                temp_this.viewers[k] = new StringParam(temp_this.json[k], temp_this, k);
+            } else if (typeof v == "boolean") {
+                temp_this.json[k] = {"param": v};
+                temp_this.viewers[k] = new BooleanParam(temp_this.json[k], temp_this, k);
+            } else if (Array.isArray(v)) {
+                temp_this.viewers[k] = new JSONList(v, temp_this, k);
+            } else {
+                temp_this.viewers[k] = new JSONDictionary(v, temp_this, k);
+            }
+        });
     }
     showTabView(){
         var temp_this = this;
@@ -231,6 +361,12 @@ class JSONNonLeaf extends JSONViewer {
             .attr("id", function(d){ return ids[d][1]; })
             .attr("class", "tab-pane fade")
             .each(function(d){ temp_this.viewers[d].display(d3.select(this)); });
+
+        this.container
+          .select(".nav")
+          .selectAll(".nav-item")
+          .select("a")
+          .on("dblclick", function(){ temp_this.editKeyName(d3.select(this).html()); });
     }
     showTableView() {
         this.tabview = false;
@@ -269,61 +405,6 @@ class JSONNonLeaf extends JSONViewer {
                 temp_this.viewers[e1].viewers[e2].display(cell);
             });
         });
-    }
-    getJSONs() {
-        var temp_this = this;
-        var return_jsons = [{}];
-        Object.keys(this.viewers).forEach(function(k){
-            var jsons = temp_this.viewers[k].getJSONs();
-            var return_jsons_list = [];
-            for (var i = 0; i < jsons.length; i++) {
-                var return_jsons_copy = JSON.parse(JSON.stringify(return_jsons));
-                return_jsons_copy.forEach(function(e){
-                    e[k] = jsons[i];
-                });
-                return_jsons_list.push(return_jsons_copy);
-            }
-            return_jsons = [].concat(...return_jsons_list);
-        });
-        return return_jsons;
-    }
-}
-
-class JSONList extends JSONNonLeaf {
-}
-
-class JSONDictionary extends JSONNonLeaf {
-    recurse() {
-        super.recurse();
-        var temp_this = this;
-        Object.keys(this.json).forEach(function(k){
-            var v = temp_this.json[k];
-            if (v == null) {
-                temp_this.viewers[k] = null;
-            } else if (typeof v == "number") {
-                temp_this.json[k] = {"param": v};
-                temp_this.viewers[k] = new NumberParam(temp_this.json[k], temp_this, k);
-            } else if (typeof v == "string") {
-                temp_this.json[k] = {"param": v};
-                temp_this.viewers[k] = new StringParam(temp_this.json[k], temp_this, k);
-            } else if (typeof v == "boolean") {
-                temp_this.json[k] = {"param": v};
-                temp_this.viewers[k] = new BooleanParam(temp_this.json[k], temp_this, k);
-            } else if (Array.isArray(v)) {
-                temp_this.viewers[k] = new JSONList(v, temp_this, k);
-            } else {
-                temp_this.viewers[k] = new JSONDictionary(v, temp_this, k);
-            }
-        });
-    }
-    showTabView() {
-        super.showTabView();
-        var temp_this = this;
-        this.container
-          .select(".nav")
-          .selectAll(".nav-item")
-          .select("a")
-          .on("dblclick", function(){ temp_this.editKeyName(d3.select(this).html()); });
     }
     editKeyName(key) {
         var temp_this = this;
@@ -373,6 +454,23 @@ class JSONDictionary extends JSONNonLeaf {
             this.viewers[newname].rename(newname);
         } else { // may not need any other cases
         }
+    }
+    getJSONs() {
+        var temp_this = this;
+        var return_jsons = [{}];
+        Object.keys(this.viewers).forEach(function(k){
+            var jsons = temp_this.viewers[k].getJSONs();
+            var return_jsons_list = [];
+            for (var i = 0; i < jsons.length; i++) {
+                var return_jsons_copy = JSON.parse(JSON.stringify(return_jsons));
+                return_jsons_copy.forEach(function(e){
+                    e[k] = jsons[i];
+                });
+                return_jsons_list.push(return_jsons_copy);
+            }
+            return_jsons = [].concat(...return_jsons_list);
+        });
+        return return_jsons;
     }
 }
 
@@ -559,9 +657,9 @@ class BooleanParam extends Param {
           .attr("value", this.json["param"])
           .attr("id", checkbox_id)
           .on("click", function(){
-              var label = d3.select("#"+checkbox_label_id);
-              label.html(!temp_this.json);
-              temp_this.json = !temp_this.json;
+              temp_this.json["param"] = !temp_this.json["param"];
+              d3.select("#"+checkbox_label_id).html(temp_this.json["param"]);
+              d3.select(this).attr("value", temp_this.json["param"]);
           });
         checkbox.node().checked = this.json["param"];
         checkdiv
@@ -570,11 +668,6 @@ class BooleanParam extends Param {
           .attr("for", checkbox_id)
           .attr("id", checkbox_label_id)
           .html(this.json["param"]);
-        // checkdiv
-        //   .append("button")
-        //   .attr("type", "button")
-        //   .attr("class", "btn btn-light")
-        //   .html("...");
     }
 }
 
@@ -858,20 +951,13 @@ function getViewerNode(prefix){
     return curr;
 }
 
-function isChild(x, y){
-    // taken from https://stackoverflow.com/questions/17773852/check-if-div-is-descendant-of-another
-    while (x = x.parentNode) { 
-      if (x.id == "a") return true;
-    }
-}
-
 
 // taken from https://ourcodeworld.com/articles/read/189/how-to-create-a-file-and-generate-a-download-with-javascript-in-the-browser-without-a-server
 function downloads() {
     let zip = new JSZip();
     var jsons = json_viewer.getJSONs();
     for (var i = 0; i < jsons.length; i++) {
-        zip.file('microsimulation_paramemters'+i+'.json', JSON.stringify(jsons[i]));
+        zip.file('microsimulation_paramemters'+i+'.json', JSON.stringify(jsons[i], undefined, 2));
     }
     zip.generateAsync({type: "blob"}).then(function(content) {
         saveAs(content, 'microsimulation_paramemters.zip');
