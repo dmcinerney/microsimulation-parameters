@@ -20,3 +20,14 @@
     display: inline-block;
     margin: 3px;
 }
+
+.param_to_select:hover {
+	background-color: lightgrey;
+	outline: black;
+	outline-style: solid;
+}
+
+.error {
+	outline: red;
+	outline-style: solid;
+}
