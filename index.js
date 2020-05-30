@@ -2,6 +2,7 @@ var json_viewer = null;
 var editing_param = null;
 var modal_chosen_param = null;
 var dependent_params = new Set([]);
+var error_iterator = null;
 class GlobalState {
     constructor() {
         this.max_global_id = 0;
@@ -63,6 +64,7 @@ function showJSON(json_string, title="Default JSON") {
         json_viewer.display("primary", d3.select("#param-editor"), "primary");
         json_viewer.display("modal", d3.select("#chooseParamModal").select(".modal-body"), "select_param");
     }
+    refreshErrorDisplay();
 }
 
 class JSONViewer {
@@ -91,8 +93,15 @@ class JSONViewer {
         this.displays[name].remove();
         delete this.displays[name];
     }
-    rename(newname) {
+    // designed to be general, but pretty much only used for renaming so far
+    move(newparent, newname) {
+        this.parent = newparent;
         this.name = newname;
+        this.afterMove();
+    }
+    // cleans up references after moving
+    // needs to be called recursively whereas moving the viewer should be done in constant time
+    afterMove() {
     }
     prefix() {
         var prefix = [this.name];
@@ -102,6 +111,10 @@ class JSONViewer {
         return prefix;
     }
     getJSONs() {
+    }
+    // cleans up references before removing
+    // needs to be called recursively whereas removing the viewer should be done in constant time
+    beforeRemove() {
     }
 }
 
@@ -155,7 +168,16 @@ class JSONNonLeaf extends JSONViewer {
         return true;
     }
     newDisplay(name, parent_div, mode) {
-       return new DisplayNonLeaf(this, name, parent_div, mode);
+        return new DisplayNonLeaf(this, name, parent_div, mode);
+    }
+    afterMove() {
+        Object.values(this.viewers).forEach(function(v){ v.afterMove(); });
+    }
+    beforeRemove() {
+        Object.values(this.viewers).forEach(function(v){ v.beforeRemove(); });
+    }
+    showKeyDisplay(display, key) {
+        return this.displays[display].showKeyDisplay(key);
     }
 }
 
@@ -173,6 +195,9 @@ class DisplayNonLeaf extends Display {
     showTabView() { // implemented in subclass
     }
     showTableView() { // implemented in subclass
+    }
+    showKeyDisplay(key) {
+        return 0;
     }
 }
 
@@ -230,10 +255,11 @@ class JSONList extends JSONNonLeaf {
         this.refreshDisplays();
     }
     deleteView(index) {
+        this.viewers[index].beforeRemove();
         for(var i = index+1; i < Object.keys(this.viewers).length; i++) {
             this.json[i-1] = this.json[i];
             this.viewers[i-1] = this.viewers[i];
-            this.viewers[i-1].rename(i);
+            this.viewers[i-1].move(this, i-1);
         }
         this.json.pop();
         delete this.viewers[Object.keys(this.viewers).length-1];
@@ -332,7 +358,6 @@ class JSONDictionary extends JSONNonLeaf {
     recurse() {
         var temp_this = this;
         this.viewers = {}; // stores all sub views
-        this.elements = {}; // stores any elements that need to be referenced
         Object.keys(this.json).forEach(function(k){
             var v = temp_this.json[k];
             if (v == null) {
@@ -372,7 +397,7 @@ class JSONDictionary extends JSONNonLeaf {
         //bookkeeping
         changeKey(this.json, key, newname);
         changeKey(this.viewers, key, newname);
-        this.viewers[newname].rename(newname);
+        this.viewers[newname].move(this, newname);
     }
     getJSONs() {
         var temp_this = this;
@@ -417,7 +442,10 @@ class DisplayDictionary extends DisplayNonLeaf {
         row
           .append("th")
           .attr("scope", "row")
-          .html(function(d){ return d; });
+          .each(function(d){ temp_this.elements[d+"_label"] = this; })
+          .append("text")
+          .attr("originaltext", function(d){ return d; })
+          .html(function(d){ return escapeHtml(d); });
         row
           .append("td")
           .attr("class", "cell")
@@ -443,7 +471,8 @@ class DisplayDictionary extends DisplayNonLeaf {
             .attr("class", "nav-link")
             .attr("data-toggle", "tab")
             .attr("href", function(d){ return "#"+ids[d][1]; })
-            .html(function(d){ return d; });
+            .attr("originaltext", function(d){ return d; })
+            .html(function(d){ return escapeHtml(d); });
 
         var tab_content_wrapper = this.container
           .append("div")
@@ -461,7 +490,18 @@ class DisplayDictionary extends DisplayNonLeaf {
               .select(".nav")
               .selectAll(".nav-item")
               .select("a")
-              .on("dblclick", function(){ temp_this.editKeyName(d3.select(this).html()); });
+              .on("dblclick", function(){ temp_this.editKeyName(d3.select(this).attr("originaltext")); });
+            this.container
+              .select("table")
+              .selectAll("tr")
+              .select("th")
+              .on("click", function(){
+                var text = d3.select(this).select("text").attr("originaltext");
+                $(document).on("click.ignore", function(){
+                  $(document).off("click.ignore");
+                  temp_this.editKeyName(text);
+                });
+              });
         }
     }
     showTableView() {
@@ -504,46 +544,75 @@ class DisplayDictionary extends DisplayNonLeaf {
     }
     editKeyName(key) {
         var temp_this = this;
-        if (this.tabview && (key in this.viewer.viewers) && (this.viewer.viewers[key] instanceof JSONNonLeaf)) {
-            var tab = d3.select(this.elements[key+"_tab"]);
-            tab.select("a").classed("hide", true);
-            var input = tab
-              .append("input")
-              .attr("class", "form-control")
-              .attr("value", key);
-            input.node().select();
-            $(input.node()).on("click", function(){ return false; });
-            $(document).on("click.forChangeKeyName", function(){
+        if (this.tabview && (key in this.viewer.viewers)) {
+            if (this.viewer.viewers[key] instanceof JSONNonLeaf) {
+                var keydiv = d3.select(this.elements[key+"_tab"]);
+                var textdiv = keydiv.select("a");
+            } else {
+                var keydiv = d3.select(this.elements[key+"_label"]);
+                var textdiv = keydiv.select("text");
+            }
+        } else { // may not need any other cases
+        }
+        textdiv.classed("hide", true);
+        var input = keydiv
+          .append("input")
+          .attr("class", "form-control")
+          .attr("value", key);
+        input.node().select();
+        $(input.node()).on("click", function(){ return false; });
+        $(document).on("click.forChangeKeyName", function(){
+            var newname = input.node().value;
+            input.node().remove();
+            $(document).off("click.forChangeKeyName");
+            textdiv.classed("hide", false);
+            temp_this.viewer.changeKeyName(key, newname);
+        });
+        //taken from https://www.w3schools.com/howto/howto_js_trigger_button_enter.asp
+        // Execute a function when the user releases a key on the keyboard
+        input.node().addEventListener("keyup", function(event) {
+            // Number 13 is the "Enter" key on the keyboard
+            if (event.keyCode === 13) {
+                // Cancel the default action, if needed
+                event.preventDefault();
+                // Trigger the button element with a click
                 var newname = input.node().value;
                 input.node().remove();
                 $(document).off("click.forChangeKeyName");
-                tab.select("a").classed("hide", false);
+                textdiv.classed("hide", false);
                 temp_this.viewer.changeKeyName(key, newname);
-            });
-            //taken from https://www.w3schools.com/howto/howto_js_trigger_button_enter.asp
-            // Execute a function when the user releases a key on the keyboard
-            input.node().addEventListener("keyup", function(event) {
-                // Number 13 is the "Enter" key on the keyboard
-                if (event.keyCode === 13) {
-                    // Cancel the default action, if needed
-                    event.preventDefault();
-                    // Trigger the button element with a click
-                    var newname = input.node().value;
-                    input.node().remove();
-                    $(document).off("click.forChangeKeyName");
-                    tab.select("a").classed("hide", false);
-                    temp_this.viewer.changeKeyName(key, newname);
-                }
-            });
-        } else { // may not need any other cases
-        }
+            }
+        });
     }
     changeKeyName(key, newname) {
-        d3.select(this.elements[key+"_tab"])
-          .select("a")
+        if (this.tabview && (key in this.viewer.viewers)) {
+            if (this.viewer.viewers[key] instanceof JSONNonLeaf) {
+                var keydiv = d3.select(this.elements[key+"_tab"]);
+                var textdiv = keydiv.select("a");
+                changeKey(this.elements, key+"_tab", newname+"_tab");
+            } else {
+                var keydiv = d3.select(this.elements[key+"_label"])
+                var textdiv = keydiv.select("text");
+                changeKey(this.elements, key+"_label", newname+"_label");
+            }
+        } else { // may not need any other cases
+        }
+        textdiv
           .classed("hide", false)
-          .html(newname);
-        changeKey(this.elements, key+"_tab", newname+"_tab");
+          .attr("originaltext", newname)
+          .html(escapeHtml(newname));
+    }
+    showKeyDisplay(key) {
+        if (!this.tabview) {
+            return 1; // table view
+        }
+        if (!(key in this.viewer.viewers)) {
+            return -1; // not found
+        }
+        if (this.viewer.viewers[key] instanceof JSONNonLeaf) {
+            $(this.container.select("ul").select("a[originaltext=\""+key+"\"]").node()).tab('show');
+        }
+        return 0; // found
     }
 }
 
@@ -607,7 +676,8 @@ class DisplayStringParam extends Display {
     select() {
         this.turnOffSelectListeners();
         // open popover
-        console.log("selecting cell");
+        console.log("selecting cell:");
+        console.log(this.viewer.prefix());
         this.parent_div.classed("selected", true);
         this.setPopoverContent();
         $(this.parent_div.node()).popover({"content":this.content.node()});
@@ -715,6 +785,12 @@ class NumberParam extends StringParam {
     savePopoverInfo(input_div) {
         this.object.savePopoverInfo(input_div);
     }
+    afterMove() {
+        this.object.afterMove();
+    }
+    beforeRemove() {
+        this.object.beforeRemove();
+    }
 }
 
 class DisplayNumberParam extends DisplayStringParam {
@@ -745,9 +821,7 @@ class DisplayNumberParam extends DisplayStringParam {
         var type = this.content.select("select").node().value;
         if (this.viewer.object.getName() != type) {
             this.viewer.object.savePopoverInfo(this.content.select("div"));
-            if (this.viewer.object instanceof IdentityNumberObject) {
-                this.viewer.object.setParam(null);
-            }
+            this.viewer.object.beforeRemove(true);
             this.viewer.object = new this.viewer.options[type](this.viewer.object.json, this.viewer, this.viewer.object.backpointers); // cast to a new object
         }
         this.viewer.object.populatePopoverInput(this.parent_div, this.content.select("div"), this);
@@ -814,6 +888,7 @@ class AbstractParamObject {
     display(cell_div) {
         cell_div.html(this.toString());
         cell_div.classed("error", false);
+        refreshErrorDisplay();
     }
     toString() {
         return "Error: abstract param object";
@@ -822,6 +897,16 @@ class AbstractParamObject {
     }
     refreshBackpointers() {
         Array.from(this.backpointers).forEach(function(param){ param.refreshDisplays(); });
+    }
+    afterMove() {
+        var temp_this = this;
+        Array.from(this.backpointers).forEach(function(param){
+            param.object.setParam(temp_this.param); });
+    }
+    beforeRemove(willreplace=false) {
+        if (!willreplace) {
+            Array.from(this.backpointers).forEach(function(param){ param.object.setParam(null); });
+        }
     }
 }
 
@@ -1126,13 +1211,16 @@ class IdentityNumberObject extends AbstractNumberObject {
             }
         }
     }
+    hasError() {
+        return this.loop || (this.reference_param_string == null);
+    }
     display(cell_div) {
         if (this.json["extras"]["reference_prefix"] != null) {
             this.setParam(getViewerNode(this.json["extras"]["reference_prefix"]));
         }
         this.savePopoverInfo(null);
         super.display(cell_div);
-        if (this.loop || (this.reference_param_string == null)) {
+        if (this.hasError()) {
             cell_div.classed("error", true);
         }
     }
@@ -1221,6 +1309,12 @@ class IdentityNumberObject extends AbstractNumberObject {
             super.refreshBackpointers();
         }
     }
+    beforeRemove(willreplace=false) {
+        this.setParam(null);
+        dependent_params.delete(this.param);
+        refreshErrorDisplay();
+        super.beforeRemove(willreplace);
+    }
 }
 
 function changeKey(dictionary, originalname, newname){
@@ -1287,12 +1381,47 @@ function checkDependencies(dependent_params_copy=null){
     }
     while (dependent_params_copy.size > 0) {
         var param = dependent_params_copy.keys().next().value;
-        if (param.object.loop || param.object.reference == null) {
+        if (param.object.hasError()) {
             return false;
         }
         dependent_params_copy.delete(param);
     }
     return true;
+}
+
+function refreshErrorDisplay() {
+    var check_dependencies = checkDependencies();
+    d3.select("#download").classed("disabled", !check_dependencies);
+    d3.select("#next_error").classed("hide", check_dependencies);
+    error_iterator = dependent_params.values();
+}
+
+function navigateTo(prefix) {
+    console.log(prefix);
+    prefix = prefix.slice(1);
+    var curr = json_viewer;
+    var return_value = 0;
+    for(var i = 0; i < prefix.length; i++) {
+        if (return_value == 0) {
+            return_value = curr.showKeyDisplay("primary", prefix[i]);
+        } else if (return_value == 1) {
+            return_value = 0;
+        } else {
+            return;
+        }
+        curr = curr.viewers[prefix[i]];
+    }
+}
+
+function nextError() {
+    for (let param of error_iterator) {
+        if (param.object.hasError()) {
+            navigateTo(param.prefix());
+            return;
+        }
+    }
+    error_iterator = dependent_params.values();
+    nextError();
 }
 
 // taken from https://ourcodeworld.com/articles/read/189/how-to-create-a-file-and-generate-a-download-with-javascript-in-the-browser-without-a-server
@@ -1329,6 +1458,7 @@ function modalSelectParam(param) {
     $('#chooseParamModal').modal('hide');
 }
 
+// taken from https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Set
 function symmetricDifference(setA, setB) {
     let _difference = new Set(setA)
     for (let elem of setB) {
@@ -1339,6 +1469,16 @@ function symmetricDifference(setA, setB) {
         }
     }
     return _difference
+}
+
+// taken from https://stackoverflow.com/questions/6234773/can-i-escape-html-special-chars-in-javascript
+function escapeHtml(unsafe) {
+    return unsafe
+         .replace(/&/g, "&amp;")
+         .replace(/</g, "&lt;")
+         .replace(/>/g, "&gt;")
+         .replace(/"/g, "&quot;")
+         .replace(/'/g, "&#039;");
 }
 
 function isNumberParam(v) {
